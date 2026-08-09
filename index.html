@@ -95,7 +95,7 @@
       transform: scaleY(1) !important;
     }
 
-    /* Echte Vektorkarte im Hintergrund */
+    /* Echte Vektorkarte im Hintergrund mit rein schwarzem Fallback */
     #map {
       width: 100%;
       height: 100%;
@@ -105,7 +105,7 @@
       background-color: #000000;
     }
 
-    /* Dynamische Radar-Blende */
+    /* Dynamische Radar-Blende (Vignetten-Kreis, der mit Tempo wächst) */
     #radar-mask {
       position: absolute;
       top: 0;
@@ -118,7 +118,7 @@
       background: radial-gradient(circle at 50% 50%, rgba(0,0,0,0) var(--radar-radius), rgba(0,0,0,0.98) calc(var(--radar-radius) + 90px), #000000 100%);
     }
 
-    /* Overlay Canvas für DNA-Animation */
+    /* Overlay Canvas für vergrößerte DNA-Animation oben rechts */
     #overlayCanvas {
       width: 100%;
       height: 100%;
@@ -151,7 +151,7 @@
       text-shadow: 0 0 25px var(--accent-glow);
     }
 
-    /* Unten Mitte: Digitale Geschwindigkeit */
+    /* Unten Mitte: Digitale Geschwindigkeit (Standardmäßig in edlem Weiß) */
     #speed-display {
       position: absolute;
       bottom: max(12px, env(safe-area-inset-bottom));
@@ -260,7 +260,7 @@
     <!-- Echte Vektorkarte -->
     <div id="map"></div>
 
-    <!-- Dynamischer Radar-Radius -->
+    <!-- Dynamischer Radar-Radius (Vignette) -->
     <div id="radar-mask" style="--radar-radius: 90px;"></div>
 
     <!-- Overlay Canvas für vergrößerte DNA-Helix -->
@@ -412,7 +412,7 @@
           document.getElementById('address-label').innerText = city ? `${road}, ${city}` : road;
         }
       } catch (e) {
-        document.getElementById('address-label'].innerText = `${lat.toFixed(4)}°, ${lng.toFixed(4)}°`;
+        document.getElementById('address-label').innerText = `${lat.toFixed(4)}°, ${lng.toFixed(4)}°`;
       }
     }
 
@@ -470,34 +470,29 @@
       document.getElementById('radar-mask').style.setProperty('--radar-radius', `${radarRadiusPx}px`);
     }
 
-    // Geschwindigkeitsprüfung: Im Normalfall dauerhaft Weiß, bei Speeding blinkend Rot/Weiß und danach zurück auf Weiß
+    // Präzises Blinken bei Tempolimit-Überschreitung mit garantiertem sauberen Weiß-Rücksprung
     function handleSpeedingFlashing(speeding) {
       const root = document.documentElement;
-
-      if (speeding) {
-        if (!isSpeeding) {
-          isSpeeding = true;
-          flashState = false;
-          if (flashInterval) clearInterval(flashInterval);
-          
-          flashInterval = setInterval(() => {
-            flashState = !flashState;
-            if (flashState) {
-              root.style.setProperty('--speed-color', '#ff0033');
-              root.style.setProperty('--speed-glow', 'rgba(255, 0, 51, 0.9)');
-            } else {
-              root.style.setProperty('--speed-color', '#ffffff');
-              root.style.setProperty('--speed-glow', 'rgba(255, 255, 255, 0.9)');
-            }
-          }, 450);
-        }
-      } else {
-        if (isSpeeding) {
-          isSpeeding = false;
-          if (flashInterval) clearInterval(flashInterval);
-          flashInterval = null;
-        }
-        // Sauberer Reset auf strahlendes Weiß im Normalbereich
+      if (speeding && !isSpeeding) {
+        isSpeeding = true;
+        flashState = false;
+        if (flashInterval) clearInterval(flashInterval);
+        
+        flashInterval = setInterval(() => {
+          flashState = !flashState;
+          if (flashState) {
+            root.style.setProperty('--speed-color', '#ffffff');
+            root.style.setProperty('--speed-glow', 'rgba(255, 255, 255, 0.9)');
+          } else {
+            root.style.setProperty('--speed-color', '#ff0033');
+            root.style.setProperty('--speed-glow', 'rgba(255, 0, 51, 0.9)');
+          }
+        }, 500);
+      } else if (!speeding && isSpeeding) {
+        isSpeeding = false;
+        if (flashInterval) clearInterval(flashInterval);
+        flashInterval = null;
+        // Sofort sauber auf Weiß zurücksetzen
         root.style.setProperty('--speed-color', '#ffffff');
         root.style.setProperty('--speed-glow', 'rgba(255, 255, 255, 0.9)');
       }
