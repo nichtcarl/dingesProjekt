@@ -95,7 +95,7 @@
       transform: scaleY(1) !important;
     }
 
-    /* Echte Vektor-Karte im Hintergrund */
+    /* Echte Vektorkarte im Hintergrund */
     #map {
       width: 100%;
       height: 100%;
@@ -103,6 +103,19 @@
       top: 0;
       left: 0;
       background-color: #000000;
+    }
+
+    /* Dynamische Radar-Blende (Vignetten-Kreis, der mit Tempo wächst) */
+    #radar-mask {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 5;
+      transition: mask-image 0.5s ease, -webkit-mask-image 0.5s ease;
+      background: radial-gradient(circle at 50% 50%, rgba(0,0,0,0) var(--radar-radius), rgba(0,0,0,0.98) calc(var(--radar-radius) + 80px), #000000 100%);
     }
 
     /* Overlay Canvas für DNA-Animation oben rechts */
@@ -247,6 +260,9 @@
     <!-- Echte Vektorkarte -->
     <div id="map"></div>
 
+    <!-- Dynamischer Radar-Radius (Vignette) -->
+    <div id="radar-mask" style="--radar-radius: 90px;"></div>
+
     <!-- Overlay Canvas für DNA-Helix -->
     <canvas id="overlayCanvas"></canvas>
 
@@ -289,8 +305,6 @@
     let flashState = false;
 
     let dnaTimer = 0;
-    let previousSpeedState = 'stationary';
-
     let currentLat = 50.8163;
     let currentLng = 7.1725;
     let lastLimitFetchPos = null;
@@ -345,7 +359,6 @@
       map.on('style.load', () => {
         const layers = map.getStyle().layers;
         layers.forEach(layer => {
-          // Unnötige Elemente (Gebäude, POIs, Labels) unsichtbar machen
           if (layer.type === 'symbol' || layer.id.includes('building') || layer.id.includes('poi') || layer.id.includes('landuse') || layer.id.includes('water')) {
             try {
               map.setLayoutProperty(layer.id, 'visibility', 'none');
@@ -375,7 +388,6 @@
       const layers = map.getStyle().layers;
 
       layers.forEach(layer => {
-        // Jede echte Straße und Linie knallrot bzw. weiß einfärben
         if (layer.type === 'line' && !layer.id.includes('admin') && !layer.id.includes('boundary')) {
           try {
             map.setPaintProperty(layer.id, 'line-color', themeColor);
@@ -430,34 +442,23 @@
       } catch (e) {}
     }
 
-    function updateCameraPerspective(kmh, newPos, heading) {
+    // Kamera-Perspektive & dynamischer Radar-Radius (wächst mit der Geschwindigkeit)
+    function updateCameraAndRadar(kmh, newPos, heading) {
       if (!map) return;
       currentSpeed = kmh;
 
-      const currentSpeedState = kmh > 5 ? 'moving' : 'stationary';
-      let targetPitch = 0;
-      let targetZoom = 17.5;
-      let animationDuration = 1000;
+      // Dynamischer Neigungswinkel (0° im Stand, bis zu 72° bei Highspeed)
+      const targetPitch = kmh > 3 ? Math.min(72, 35 + (kmh * 0.45)) : 0;
+      
+      // Zoom-Level passt sich an (weiter weg bei hoher Geschwindigkeit)
+      const targetZoom = kmh > 100 ? 15.2 : (kmh > 60 ? 16.0 : (kmh > 20 ? 16.8 : 17.5));
 
-      if (currentSpeedState === 'moving') {
-        targetPitch = 68; // Echte 3D Neigung in Fahrtrichtung
-        targetZoom = kmh > 80 ? 15.8 : (kmh > 40 ? 16.8 : 17.8);
-        if (previousSpeedState === 'stationary') animationDuration = 2200;
-      } else {
-        targetPitch = 0; 
-        targetZoom = 17.2;
-        if (previousSpeedState === 'moving') animationDuration = 1800;
-      }
-
-      previousSpeedState = currentSpeedState;
-
-      map.flyTo({
+      map.easeTo({
         center: newPos,
         pitch: targetPitch,
         zoom: targetZoom,
         bearing: heading !== null && !isNaN(heading) ? heading : map.getBearing(),
-        duration: animationDuration,
-        essential: true,
+        duration: 800,
         easing: (t) => t * (2 - t)
       });
 
@@ -467,6 +468,10 @@
         const arrow = document.getElementById('user-arrow');
         if (arrow) arrow.style.transform = `rotate(${heading}deg)`;
       }
+
+      // Radar-Radius berechnen: Im Stand ein kleiner Kreis (70px), bei schneller Fahrt größer (bis 450px)
+      const radarRadiusPx = Math.min(window.innerWidth * 0.6, 70 + (kmh * 3.8));
+      document.getElementById('radar-mask').style.setProperty('--radar-radius', `${radarRadiusPx}px`);
     }
 
     function handleSpeedingFlashing(speeding) {
@@ -590,7 +595,7 @@
             currentMode = autoDetectNightMode(currentLat, currentLng);
             applyTheme(currentMode);
 
-            updateCameraPerspective(kmh, [currentLng, currentLat], heading);
+            updateCameraAndRadar(kmh, [currentLng, currentLat], heading);
             fetchSpeedLimit(currentLat, currentLng);
           },
           (err) => {},
@@ -604,7 +609,7 @@
       document.documentElement.style.setProperty('--accent-color', theme.hex);
       document.documentElement.style.setProperty('--accent-glow', theme.glow);
       if (!isSpeeding) {
-        document.documentElement.style.setProperty('--speed-color', theme.hex);
+        document.documentElement.style.setProperty('--speed-speed-color', theme.hex);
         document.documentElement.style.setProperty('--speed-glow', theme.glow);
       }
       updateMapThemeColors();
