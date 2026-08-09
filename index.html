@@ -10,7 +10,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="HUD">
 
-  <!-- Authentische 7-Segment Digitaluhren Schriftart & Orbitron -->
+  <!-- Schriften -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.cdnfonts.com/css/ds-digital" rel="stylesheet">
@@ -19,10 +19,10 @@
   <style>
     :root {
       --accent-color: #ff0033;
-      --accent-glow: rgba(255, 0, 51, 0.7);
+      --accent-glow: rgba(255, 0, 51, 0.9);
       --bg-color: #000000;
       --speed-color: #ff0033;
-      --speed-glow: rgba(255, 0, 51, 0.7);
+      --speed-glow: rgba(255, 0, 51, 0.9);
     }
 
     * {
@@ -43,7 +43,7 @@
       width: 100%;
     }
 
-    /* Start Overlay für expliziten Nutzer-Klick */
+    /* Start Overlay */
     #start-overlay {
       position: absolute;
       top: 0;
@@ -70,7 +70,7 @@
       font-weight: 900;
       letter-spacing: 3px;
       cursor: pointer;
-      box-shadow: 0 0 20px var(--accent-glow);
+      box-shadow: 0 0 25px var(--accent-glow);
     }
 
     .start-btn:active {
@@ -92,7 +92,7 @@
       transform: scaleY(1) !important;
     }
 
-    /* Canvas für echtes reines Vektor-Rendering der Straßen und DNA */
+    /* Canvas für echtes reines Vektor-Rendering */
     #vectorCanvas {
       width: 100%;
       height: 100%;
@@ -182,7 +182,7 @@
       max-width: 280px;
     }
 
-    /* Controls Unten Rechts ("Ghost"-Look) */
+    /* Controls Unten Rechts */
     #controls {
       position: absolute;
       bottom: max(18px, env(safe-area-inset-bottom));
@@ -271,13 +271,12 @@
     let lastLimitFetchPos = null;
     let osmWays = [];
 
-    // Kameraperspektive-Zustände (flach vs. 3D-Fluchtpunkt)
-    let cameraPitch = 0; // 0 = Top-Down, 1 = Volles 3D
+    let cameraPitch = 0; 
     let targetPitchSetting = 0;
 
     const themes = {
-      night: { hex: '#ff0033', glow: 'rgba(255, 0, 51, 0.8)', arrow: '#ffffff' },
-      day: { hex: '#ffffff', glow: 'rgba(255, 255, 255, 0.8)', arrow: '#ff0033' }
+      night: { hex: '#ff0033', glow: 'rgba(255, 0, 51, 0.9)', arrow: '#ffffff' },
+      day: { hex: '#ffffff', glow: 'rgba(255, 255, 255, 0.9)', arrow: '#ff0033' }
     };
     let currentMode = 'night';
 
@@ -351,7 +350,7 @@
 
     async function fetchVectorRoads(lat, lng) {
       try {
-        const query = `[out:json][timeout:5];way(around:350,${lat},${lng})["highway"];out geom;`;
+        const query = `[out:json][timeout:5];way(around:400,${lat},${lng})["highway"];out geom;`;
         const res = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
         const data = await res.json();
         if (data.elements) {
@@ -384,7 +383,7 @@
       }
     }
 
-    // Haupt-Render-Schleife für Vektorstraßen, Fahrzeugpfeil & DNA-Helix
+    // Canvas Render Loop
     function renderHUDCanvas() {
       ctx.fillStyle = '#000000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -393,31 +392,37 @@
       const h = canvas.height;
       const accent = themes[currentMode].hex;
 
-      // Sanfter Übergang zwischen 2D-Draufsicht und 3D-Fluchtpunkt
       const targetP = currentSpeed > 5 ? 1 : 0;
       cameraPitch += (targetP - cameraPitch) * 0.05;
 
       const centerX = w / 2;
       const centerY = h * (0.55 + cameraPitch * 0.25);
 
-      // Skalierungsfaktor: 1 Grad Lat/Lng in Pixel
-      const scale = Math.min(w, h) * 35000;
+      const scale = Math.min(w, h) * 45000;
 
       ctx.save();
-      // Rotation um aktuelle Fahrtrichtung in 2D, in 3D stattdessen ausgerichteter Fluchtpunkt
       if (cameraPitch < 0.05) {
         ctx.translate(centerX, centerY);
         ctx.rotate((-currentHeading * Math.PI) / 180);
         ctx.translate(-centerX, -centerY);
       }
 
-      // 1. Echte OpenStreetMap Vektorstraßen zeichnen
+      // Neon-Straßen zeichnen
       ctx.strokeStyle = accent;
       ctx.shadowColor = accent;
-      ctx.shadowBlur = 10;
-      ctx.lineWidth = Math.max(2, w * 0.003);
+      ctx.shadowBlur = 18;
+      ctx.lineWidth = Math.max(3, w * 0.004);
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
+
+      if (osmWays.length === 0) {
+        // Fallback-Vektornetz, falls API lädt
+        ctx.beginPath();
+        ctx.moveTo(centerX - 150, centerY + 200);
+        ctx.lineTo(centerX - 150, centerY - 300);
+        ctx.lineTo(centerX + 250, centerY - 300);
+        ctx.stroke();
+      }
 
       osmWays.forEach(way => {
         const geom = way.geometry;
@@ -426,15 +431,13 @@
 
         for (let i = 0; i < geom.length; i++) {
           const pt = geom[i];
-          // Versatz zum aktuellen GPS-Standort berechnen
           const dLon = (pt.lon - currentLng) * Math.cos(currentLat * Math.PI / 180);
           const dLat = (pt.lat - currentLat);
 
           let px = centerX + dLon * scale;
-          let py = centerY - dLat * scale; // Y ist invertiert auf dem Bildschirm
+          let py = centerY - dLat * scale;
 
           if (cameraPitch > 0.01) {
-            // 3D Perspektiven-Transformation (Fluchtpunkt nach vorne)
             const relY = py - centerY;
             const perspectiveFactor = 1 / (1 + Math.max(0, -relY) * 0.002 * cameraPitch);
             px = centerX + (px - centerX) * perspectiveFactor;
@@ -453,7 +456,7 @@
 
       ctx.restore();
 
-      // 2. Eigenes Fahrzeug (Neon-Pfeil in der Mitte)
+      // Fahrzeug-Pfeil
       ctx.save();
       ctx.translate(centerX, centerY);
       if (cameraPitch < 0.05) {
@@ -464,19 +467,18 @@
       ctx.lineWidth = 4;
       ctx.fillStyle = themes[currentMode].arrow;
       ctx.shadowColor = themes[currentMode].arrow;
-      ctx.shadowBlur = 15;
+      ctx.shadowBlur = 20;
 
       ctx.beginPath();
-      ctx.moveTo(0, -22);
-      ctx.lineTo(16, 20);
-      ctx.lineTo(0, 10);
-      ctx.lineTo(-16, 20);
+      ctx.moveTo(0, -26);
+      ctx.lineTo(18, 24);
+      ctx.lineTo(0, 12);
+      ctx.lineTo(-18, 24);
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
       ctx.restore();
 
-      // 3. Retro DNA-Helix oben rechts
       drawRetroDNAVisualizer(w, h, accent);
 
       requestAnimationFrame(renderHUDCanvas);
@@ -498,8 +500,8 @@
       ctx.strokeStyle = accent;
       ctx.fillStyle = accent;
       ctx.shadowColor = accent;
-      ctx.shadowBlur = 12;
-      ctx.lineWidth = 2;
+      ctx.shadowBlur = 15;
+      ctx.lineWidth = 2.5;
 
       const numPoints = 14;
       const spacing = dnaWidth / numPoints;
@@ -511,19 +513,19 @@
         const y1 = startY + Math.sin(angle) * (dnaHeight / 2);
         const y2 = startY - Math.sin(angle) * (dnaHeight / 2);
 
-        ctx.globalAlpha = 0.3;
+        ctx.globalAlpha = 0.35;
         ctx.beginPath();
         ctx.moveTo(x, y1);
         ctx.lineTo(x, y2);
         ctx.stroke();
 
-        ctx.globalAlpha = 0.9;
+        ctx.globalAlpha = 0.95;
         ctx.beginPath();
-        ctx.arc(x, y1, 3.5, 0, Math.PI * 2);
+        ctx.arc(x, y1, 4, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.beginPath();
-        ctx.arc(x, y2, 3.5, 0, Math.PI * 2);
+        ctx.arc(x, y2, 4, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.restore();
