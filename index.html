@@ -10,10 +10,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="HUD">
 
-  <!-- MapLibre GL CSS -->
-  <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
-
-  <!-- Authentische 7-Segment Digitaluhren Schriftart -->
+  <!-- Authentische 7-Segment Digitaluhren Schriftart & Orbitron -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.cdnfonts.com/css/ds-digital" rel="stylesheet">
@@ -88,31 +85,22 @@
       position: relative;
       transition: transform 0.3s ease-in-out;
       transform: scaleY(-1);
+      background-color: #000000;
     }
 
     .hud-mode-disabled {
       transform: scaleY(1) !important;
     }
 
-    /* Echte MapLibre Vektor-Karte */
-    #map {
+    /* Canvas für echtes reines Vektor-Rendering der Straßen und DNA */
+    #vectorCanvas {
       width: 100%;
       height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
       background-color: #000000;
-      position: absolute;
-      top: 0;
-      left: 0;
-    }
-
-    /* Overlay Canvas für die Retro DNA-Spule */
-    #overlayCanvas {
-      width: 100%;
-      height: 100%;
-      position: absolute;
-      top: 0;
-      left: 0;
-      pointer-events: none;
-      z-index: 10;
+      z-index: 5;
     }
 
     /* Oben Links: Digitales Tempolimit */
@@ -229,10 +217,6 @@
       background: var(--accent-color);
       color: #000;
     }
-
-    .maplibregl-ctrl-attrib, .maplibregl-ctrl-logo {
-      display: none !important;
-    }
   </style>
 </head>
 <body>
@@ -243,11 +227,8 @@
   </div>
 
   <div id="app-container">
-    <!-- Echte MapLibre Vektorkarte -->
-    <div id="map"></div>
-
-    <!-- Overlay Canvas für DNA-Helix -->
-    <canvas id="overlayCanvas"></canvas>
+    <!-- Reiner Canvas für Vektorstraßen & DNA -->
+    <canvas id="vectorCanvas"></canvas>
 
     <!-- Oben Links: Reiner Tempolimit-Wert -->
     <div id="limit-display">
@@ -273,14 +254,10 @@
     </div>
   </div>
 
-  <!-- MapLibre GL JS -->
-  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
-
   <script>
-    let map;
-    let userMarker;
-    let markerElement;
-    
+    const canvas = document.getElementById('vectorCanvas');
+    const ctx = canvas.getContext('2d');
+
     let currentSpeed = 0;
     let speedLimit = null;
     let isSpeeding = false;
@@ -288,48 +265,37 @@
     let flashState = false;
 
     let dnaTimer = 0;
-    let previousSpeedState = 'stationary';
-
     let currentLat = 50.8163;
     let currentLng = 7.1725;
+    let currentHeading = 0;
     let lastLimitFetchPos = null;
+    let osmWays = [];
 
-    const overlayCanvas = document.getElementById('overlayCanvas');
-    const ctx = overlayCanvas.getContext('2d');
+    // Kameraperspektive-Zustände (flach vs. 3D-Fluchtpunkt)
+    let cameraPitch = 0; // 0 = Top-Down, 1 = Volles 3D
+    let targetPitchSetting = 0;
 
     const themes = {
-      night: { 
-        hex: '#ff0033', 
-        glow: 'rgba(255, 0, 51, 0.7)', 
-        arrow: '#ffffff' 
-      },
-      day: { 
-        hex: '#ffffff', 
-        glow: 'rgba(255, 255, 255, 0.7)', 
-        arrow: '#ff0033' 
-      }
+      night: { hex: '#ff0033', glow: 'rgba(255, 0, 51, 0.8)', arrow: '#ffffff' },
+      day: { hex: '#ffffff', glow: 'rgba(255, 255, 255, 0.8)', arrow: '#ff0033' }
     };
     let currentMode = 'night';
 
-    function resizeOverlayCanvas() {
-      overlayCanvas.width = window.innerWidth * window.devicePixelRatio;
-      overlayCanvas.height = window.innerHeight * window.devicePixelRatio;
+    function resizeCanvas() {
+      canvas.width = window.innerWidth * window.devicePixelRatio;
+      canvas.height = window.innerHeight * window.devicePixelRatio;
     }
-    window.addEventListener('resize', resizeOverlayCanvas);
-    resizeOverlayCanvas();
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
 
-    // Astronomische Sunset-Berechnung
     function calculateSunsetHour(lat, lng) {
       const now = new Date();
       const startOfYear = new Date(now.getFullYear(), 0, 0);
       const dayOfYear = Math.floor((now - startOfYear) + ((startOfYear.getTimezoneOffset() - now.getTimezoneOffset()) * 60000)) / 86400000;
-      
       const p = Math.asin(0.39795 * Math.sin((0.98565 * (dayOfYear - 173) + 3.1517) * Math.PI / 180));
       const latRad = lat * Math.PI / 180;
       const hourAngle = Math.acos(-Math.tan(latRad) * Math.tan(p));
-      
       if (isNaN(hourAngle)) return 18;
-
       const sunsetTimeUTC = 12 + (hourAngle * 180 / Math.PI) / 15 - (lng / 15);
       return sunsetTimeUTC - (now.getTimezoneOffset() / 60);
     }
@@ -337,67 +303,12 @@
     function autoDetectNightMode(lat, lng) {
       const now = new Date();
       const currentDecimalHour = now.getHours() + (now.getMinutes() / 60);
-      
       const sunsetHour = calculateSunsetHour(lat, lng);
       const nightModeStartHour = sunsetHour - 1.0;
       const sunriseHour = 24 - sunsetHour;
-
       return (currentDecimalHour >= nightModeStartHour || currentDecimalHour < sunriseHour) ? 'night' : 'day';
     }
 
-    // Initialisiert echte Vektor-Karte
-    function initMap() {
-      map = new maplibregl.Map({
-        container: 'map',
-        style: 'https://tiles.openfreemap.org/styles/dark',
-        center: [currentLng, currentLat],
-        zoom: 17.5,
-        pitch: 0,
-        bearing: 0
-      });
-
-      map.on('load', () => {
-        // Alle unnoetigen Karten-Layer wie Gebaeude, Pois, Wasser, Text-Labels ausblenden
-        const layersToHide = ['building', 'poi', 'water', 'landuse', 'place-label', 'road-label'];
-        layersToHide.forEach(layer => {
-          if (map.getLayer(layer)) map.setLayoutProperty(layer, 'visibility', 'none');
-        });
-
-        // Fahrzeug-Pfeil
-        markerElement = document.createElement('div');
-        markerElement.innerHTML = `
-          <svg width="36" height="36" viewBox="0 0 100 100" id="user-arrow" style="transition: transform 0.2s ease;">
-            <polygon points="50,5 90,90 50,70 10,90" fill="${themes[currentMode].arrow}" stroke="#000000" stroke-width="4"/>
-          </svg>
-        `;
-
-        userMarker = new maplibregl.Marker({ element: markerElement })
-          .setLngLat([currentLng, currentLat])
-          .addTo(map);
-
-        updateMapThemeColors();
-      });
-    }
-
-    // Färbt die echten Kartenstraßen dynamisch in Rot / Weiß um
-    function updateMapThemeColors() {
-      if (!map) return;
-      const themeColor = themes[currentMode].hex;
-
-      const roadLayers = ['road_primary', 'road_secondary', 'road_tertiary', 'road_trunk', 'road_motorway', 'road_minor', 'road_service'];
-      roadLayers.forEach(layer => {
-        if (map.getLayer(layer)) {
-          map.setPaintProperty(layer, 'line-color', themeColor);
-        }
-      });
-
-      const arrowPoly = document.querySelector('#user-arrow polygon');
-      if (arrowPoly) {
-        arrowPoly.setAttribute('fill', themes[currentMode].arrow);
-      }
-    }
-
-    // Echte Adresse laden
     async function fetchAddressLabel(lat, lng) {
       try {
         const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`);
@@ -412,7 +323,6 @@
       }
     }
 
-    // Tempolimit aus Overpass auslesen
     async function fetchSpeedLimit(lat, lng) {
       if (lastLimitFetchPos) {
         const dLat = Math.abs(lat - lastLimitFetchPos.lat);
@@ -420,14 +330,12 @@
         if (dLat < 0.001 && dLng < 0.001) return;
       }
       lastLimitFetchPos = { lat, lng };
-
       fetchAddressLabel(lat, lng);
 
       try {
-        const query = `[out:json][timeout:5];way(around:25,${lat},${lng})["maxspeed"];out tags;`;
+        const query = `[out:json][timeout:5];way(around:30,${lat},${lng})["maxspeed"];out tags;`;
         const res = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
         const data = await res.json();
-
         if (data.elements && data.elements.length > 0 && data.elements[0].tags.maxspeed) {
           const limit = parseInt(data.elements[0].tags.maxspeed);
           if (!isNaN(limit)) {
@@ -441,44 +349,15 @@
       } catch (e) {}
     }
 
-    // Kamera-Anpassung: Top-Down im Stand (0-5 km/h) & 3D-Kamerafahrt bei Fahrt (> 5 km/h)
-    function updateCameraPerspective(kmh, newPos, heading) {
-      if (!map) return;
-      currentSpeed = kmh;
-
-      const currentSpeedState = kmh > 5 ? 'moving' : 'stationary';
-      let targetPitch = 0;
-      let targetZoom = 17.5;
-      let animationDuration = 1000;
-
-      if (currentSpeedState === 'moving') {
-        targetPitch = 68; // Echte 3D Neigung in Fahrtrichtung
-        targetZoom = kmh > 80 ? 15.8 : (kmh > 40 ? 16.8 : 17.8);
-        if (previousSpeedState === 'stationary') animationDuration = 2200;
-      } else {
-        targetPitch = 0; // Flache Draufsicht im Stand
-        targetZoom = 17.2;
-        if (previousSpeedState === 'moving') animationDuration = 1800;
-      }
-
-      previousSpeedState = currentSpeedState;
-
-      map.flyTo({
-        center: newPos,
-        pitch: targetPitch,
-        zoom: targetZoom,
-        bearing: heading !== null && !isNaN(heading) ? heading : map.getBearing(),
-        duration: animationDuration,
-        essential: true,
-        easing: (t) => t * (2 - t)
-      });
-
-      if (userMarker) userMarker.setLngLat(newPos);
-
-      if (heading !== null && !isNaN(heading)) {
-        const arrow = document.getElementById('user-arrow');
-        if (arrow) arrow.style.transform = `rotate(${heading}deg)`;
-      }
+    async function fetchVectorRoads(lat, lng) {
+      try {
+        const query = `[out:json][timeout:5];way(around:350,${lat},${lng})["highway"];out geom;`;
+        const res = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
+        const data = await res.json();
+        if (data.elements) {
+          osmWays = data.elements.filter(el => el.geometry && el.geometry.length > 1);
+        }
+      } catch (e) {}
     }
 
     function handleSpeedingFlashing(speeding) {
@@ -486,7 +365,6 @@
         isSpeeding = true;
         flashState = false;
         if (flashInterval) clearInterval(flashInterval);
-        
         flashInterval = setInterval(() => {
           flashState = !flashState;
           const root = document.documentElement;
@@ -506,14 +384,105 @@
       }
     }
 
-    // Zeichnet DNA Visualizer oben rechts
-    function drawRetroDNAVisualizer() {
-      ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    // Haupt-Render-Schleife für Vektorstraßen, Fahrzeugpfeil & DNA-Helix
+    function renderHUDCanvas() {
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      const w = overlayCanvas.width;
-      const h = overlayCanvas.height;
+      const w = canvas.width;
+      const h = canvas.height;
       const accent = themes[currentMode].hex;
 
+      // Sanfter Übergang zwischen 2D-Draufsicht und 3D-Fluchtpunkt
+      const targetP = currentSpeed > 5 ? 1 : 0;
+      cameraPitch += (targetP - cameraPitch) * 0.05;
+
+      const centerX = w / 2;
+      const centerY = h * (0.55 + cameraPitch * 0.25);
+
+      // Skalierungsfaktor: 1 Grad Lat/Lng in Pixel
+      const scale = Math.min(w, h) * 35000;
+
+      ctx.save();
+      // Rotation um aktuelle Fahrtrichtung in 2D, in 3D stattdessen ausgerichteter Fluchtpunkt
+      if (cameraPitch < 0.05) {
+        ctx.translate(centerX, centerY);
+        ctx.rotate((-currentHeading * Math.PI) / 180);
+        ctx.translate(-centerX, -centerY);
+      }
+
+      // 1. Echte OpenStreetMap Vektorstraßen zeichnen
+      ctx.strokeStyle = accent;
+      ctx.shadowColor = accent;
+      ctx.shadowBlur = 10;
+      ctx.lineWidth = Math.max(2, w * 0.003);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      osmWays.forEach(way => {
+        const geom = way.geometry;
+        ctx.beginPath();
+        let started = false;
+
+        for (let i = 0; i < geom.length; i++) {
+          const pt = geom[i];
+          // Versatz zum aktuellen GPS-Standort berechnen
+          const dLon = (pt.lon - currentLng) * Math.cos(currentLat * Math.PI / 180);
+          const dLat = (pt.lat - currentLat);
+
+          let px = centerX + dLon * scale;
+          let py = centerY - dLat * scale; // Y ist invertiert auf dem Bildschirm
+
+          if (cameraPitch > 0.01) {
+            // 3D Perspektiven-Transformation (Fluchtpunkt nach vorne)
+            const relY = py - centerY;
+            const perspectiveFactor = 1 / (1 + Math.max(0, -relY) * 0.002 * cameraPitch);
+            px = centerX + (px - centerX) * perspectiveFactor;
+            py = centerY + relY * (1 + cameraPitch * 1.5);
+          }
+
+          if (!started) {
+            ctx.moveTo(px, py);
+            started = true;
+          } else {
+            ctx.lineTo(px, py);
+          }
+        }
+        ctx.stroke();
+      });
+
+      ctx.restore();
+
+      // 2. Eigenes Fahrzeug (Neon-Pfeil in der Mitte)
+      ctx.save();
+      ctx.translate(centerX, centerY);
+      if (cameraPitch < 0.05) {
+        ctx.rotate((currentHeading * Math.PI) / 180);
+      }
+
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = 4;
+      ctx.fillStyle = themes[currentMode].arrow;
+      ctx.shadowColor = themes[currentMode].arrow;
+      ctx.shadowBlur = 15;
+
+      ctx.beginPath();
+      ctx.moveTo(0, -22);
+      ctx.lineTo(16, 20);
+      ctx.lineTo(0, 10);
+      ctx.lineTo(-16, 20);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+
+      // 3. Retro DNA-Helix oben rechts
+      drawRetroDNAVisualizer(w, h, accent);
+
+      requestAnimationFrame(renderHUDCanvas);
+    }
+
+    function drawRetroDNAVisualizer(w, h, accent) {
       const dnaWidth = Math.min(220, w * 0.22);
       const dnaHeight = 42;
       const marginRight = Math.max(40, w * 0.05);
@@ -557,15 +526,13 @@
         ctx.arc(x, y2, 3.5, 0, Math.PI * 2);
         ctx.fill();
       }
-
       ctx.restore();
-
-      requestAnimationFrame(drawRetroDNAVisualizer);
     }
 
     function startHUDWithClick() {
       document.getElementById('start-overlay').style.display = 'none';
       forceLocationReload();
+      requestAnimationFrame(renderHUDCanvas);
     }
 
     function forceLocationReload() {
@@ -578,8 +545,8 @@
           (pos) => {
             currentLat = pos.coords.latitude;
             currentLng = pos.coords.longitude;
-            map.jumpTo({ center: [currentLng, currentLat], zoom: 17.5 });
             fetchSpeedLimit(currentLat, currentLng);
+            fetchVectorRoads(currentLat, currentLng);
 
             document.getElementById('status-dot').style.backgroundColor = '#00ffcc';
             document.getElementById('status-dot').style.boxShadow = '0 0 10px rgba(0, 255, 204, 0.8)';
@@ -594,9 +561,12 @@
           (pos) => {
             currentLat = pos.coords.latitude;
             currentLng = pos.coords.longitude;
-            const heading = pos.coords.heading;
+            if (pos.coords.heading !== null && !isNaN(pos.coords.heading)) {
+              currentHeading = pos.coords.heading;
+            }
             const speedMS = pos.coords.speed || 0;
             const kmh = Math.round(speedMS * 3.6);
+            currentSpeed = kmh;
 
             document.getElementById('speed').innerText = kmh;
             handleSpeedingFlashing(speedLimit && kmh > speedLimit);
@@ -604,8 +574,8 @@
             currentMode = autoDetectNightMode(currentLat, currentLng);
             applyTheme(currentMode);
 
-            updateCameraPerspective(kmh, [currentLng, currentLat], heading);
             fetchSpeedLimit(currentLat, currentLng);
+            fetchVectorRoads(currentLat, currentLng);
           },
           (err) => {},
           { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
@@ -621,7 +591,6 @@
         document.documentElement.style.setProperty('--speed-color', theme.hex);
         document.documentElement.style.setProperty('--speed-glow', theme.glow);
       }
-      updateMapThemeColors();
     }
 
     function toggleDayNightManual() {
@@ -635,12 +604,10 @@
     }
 
     window.onload = () => {
-      initMap();
       currentMode = autoDetectNightMode(currentLat, currentLng);
       applyTheme(currentMode);
-
-      drawRetroDNAVisualizer();
     };
   </script>
 </body>
 </html>
+
