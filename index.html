@@ -24,8 +24,8 @@
       --accent-color: #ff0033;
       --accent-glow: rgba(255, 0, 51, 0.9);
       --bg-color: #000000;
-      --speed-color: #ff0033;
-      --speed-glow: rgba(255, 0, 51, 0.9);
+      --speed-color: #ffffff;
+      --speed-glow: rgba(255, 255, 255, 0.9);
     }
 
     * {
@@ -105,7 +105,7 @@
       background-color: #000000;
     }
 
-    /* Dynamische Radar-Blende (Vignetten-Kreis, der mit Tempo wächst) */
+    /* Dynamische Radar-Blende */
     #radar-mask {
       position: absolute;
       top: 0;
@@ -115,10 +115,10 @@
       pointer-events: none;
       z-index: 5;
       transition: mask-image 0.5s ease, -webkit-mask-image 0.5s ease;
-      background: radial-gradient(circle at 50% 50%, rgba(0,0,0,0) var(--radar-radius), rgba(0,0,0,0.98) calc(var(--radar-radius) + 80px), #000000 100%);
+      background: radial-gradient(circle at 50% 50%, rgba(0,0,0,0) var(--radar-radius), rgba(0,0,0,0.98) calc(var(--radar-radius) + 90px), #000000 100%);
     }
 
-    /* Overlay Canvas für DNA-Animation oben rechts */
+    /* Overlay Canvas für DNA-Animation */
     #overlayCanvas {
       width: 100%;
       height: 100%;
@@ -170,7 +170,7 @@
       font-variant-numeric: tabular-nums;
       color: var(--speed-color);
       text-shadow: 0 0 40px var(--speed-glow);
-      transition: color 0.75s ease-in-out, text-shadow 0.75s ease-in-out;
+      transition: color 0.5s ease-in-out, text-shadow 0.5s ease-in-out;
     }
 
     /* Unten Links: Aktuelle Adresse / GPS Status */
@@ -260,10 +260,10 @@
     <!-- Echte Vektorkarte -->
     <div id="map"></div>
 
-    <!-- Dynamischer Radar-Radius (Vignette) -->
+    <!-- Dynamischer Radar-Radius -->
     <div id="radar-mask" style="--radar-radius: 90px;"></div>
 
-    <!-- Overlay Canvas für DNA-Helix -->
+    <!-- Overlay Canvas für vergrößerte DNA-Helix -->
     <canvas id="overlayCanvas"></canvas>
 
     <!-- Oben Links: Reiner Tempolimit-Wert -->
@@ -359,7 +359,7 @@
       map.on('style.load', () => {
         const layers = map.getStyle().layers;
         layers.forEach(layer => {
-          if (layer.type === 'symbol' || layer.id.includes('building') || layer.id.includes('poi') || layer.id.includes('landuse') || layer.id.includes('water')) {
+          if (layer.type === 'symbol' || layer.id.includes('building') || layer.id.includes('poi') || layer.id.includes('landuse') || layer.id.includes('water') || layer.id.includes('park') || layer.id.includes('background')) {
             try {
               map.setLayoutProperty(layer.id, 'visibility', 'none');
             } catch(e) {}
@@ -371,7 +371,7 @@
       map.on('load', () => {
         markerElement = document.createElement('div');
         markerElement.innerHTML = `
-          <svg width="40" height="40" viewBox="0 0 100 100" id="user-arrow" style="transition: transform 0.2s ease;">
+          <svg width="44" height="44" viewBox="0 0 100 100" id="user-arrow">
             <polygon points="50,5 95,90 50,70 5,90" fill="${themes[currentMode].arrow}" stroke="#000000" stroke-width="4"/>
           </svg>
         `;
@@ -412,7 +412,7 @@
           document.getElementById('address-label').innerText = city ? `${road}, ${city}` : road;
         }
       } catch (e) {
-        document.getElementById('address-label').innerText = `${lat.toFixed(4)}°, ${lng.toFixed(4)}°`;
+        document.getElementById('address-label'].innerText = `${lat.toFixed(4)}°, ${lng.toFixed(4)}°`;
       }
     }
 
@@ -442,59 +442,64 @@
       } catch (e) {}
     }
 
-    // Kamera-Perspektive & dynamischer Radar-Radius (wächst mit der Geschwindigkeit)
     function updateCameraAndRadar(kmh, newPos, heading) {
       if (!map) return;
       currentSpeed = kmh;
 
-      // Dynamischer Neigungswinkel (0° im Stand, bis zu 72° bei Highspeed)
       const targetPitch = kmh > 3 ? Math.min(72, 35 + (kmh * 0.45)) : 0;
-      
-      // Zoom-Level passt sich an (weiter weg bei hoher Geschwindigkeit)
       const targetZoom = kmh > 100 ? 15.2 : (kmh > 60 ? 16.0 : (kmh > 20 ? 16.8 : 17.5));
+      const currentBearing = heading !== null && !isNaN(heading) ? heading : map.getBearing();
 
       map.easeTo({
         center: newPos,
         pitch: targetPitch,
         zoom: targetZoom,
-        bearing: heading !== null && !isNaN(heading) ? heading : map.getBearing(),
+        bearing: currentBearing,
         duration: 800,
         easing: (t) => t * (2 - t)
       });
 
       if (userMarker) userMarker.setLngLat(newPos);
 
-      if (heading !== null && !isNaN(heading)) {
-        const arrow = document.getElementById('user-arrow');
-        if (arrow) arrow.style.transform = `rotate(${heading}deg)`;
+      const arrow = document.getElementById('user-arrow');
+      if (arrow) {
+        arrow.style.transform = `rotate(0deg)`;
       }
 
-      // Radar-Radius berechnen: Im Stand ein kleiner Kreis (70px), bei schneller Fahrt größer (bis 450px)
-      const radarRadiusPx = Math.min(window.innerWidth * 0.6, 70 + (kmh * 3.8));
+      const radarRadiusPx = Math.min(window.innerWidth * 0.65, 80 + (kmh * 4.2));
       document.getElementById('radar-mask').style.setProperty('--radar-radius', `${radarRadiusPx}px`);
     }
 
+    // Geschwindigkeitsprüfung: Im Normalfall dauerhaft Weiß, bei Speeding blinkend Rot/Weiß und danach zurück auf Weiß
     function handleSpeedingFlashing(speeding) {
-      if (speeding && !isSpeeding) {
-        isSpeeding = true;
-        flashState = false;
-        if (flashInterval) clearInterval(flashInterval);
-        flashInterval = setInterval(() => {
-          flashState = !flashState;
-          const root = document.documentElement;
-          if (flashState) {
-            root.style.setProperty('--speed-color', '#ffffff');
-            root.style.setProperty('--speed-glow', 'rgba(255, 255, 255, 0.9)');
-          } else {
-            root.style.setProperty('--speed-color', '#ff0033');
-            root.style.setProperty('--speed-glow', 'rgba(255, 0, 51, 0.9)');
-          }
-        }, 750);
-      } else if (!speeding && isSpeeding) {
-        isSpeeding = false;
-        if (flashInterval) clearInterval(flashInterval);
-        flashInterval = null;
-        applyTheme(currentMode);
+      const root = document.documentElement;
+
+      if (speeding) {
+        if (!isSpeeding) {
+          isSpeeding = true;
+          flashState = false;
+          if (flashInterval) clearInterval(flashInterval);
+          
+          flashInterval = setInterval(() => {
+            flashState = !flashState;
+            if (flashState) {
+              root.style.setProperty('--speed-color', '#ff0033');
+              root.style.setProperty('--speed-glow', 'rgba(255, 0, 51, 0.9)');
+            } else {
+              root.style.setProperty('--speed-color', '#ffffff');
+              root.style.setProperty('--speed-glow', 'rgba(255, 255, 255, 0.9)');
+            }
+          }, 450);
+        }
+      } else {
+        if (isSpeeding) {
+          isSpeeding = false;
+          if (flashInterval) clearInterval(flashInterval);
+          flashInterval = null;
+        }
+        // Sauberer Reset auf strahlendes Weiß im Normalbereich
+        root.style.setProperty('--speed-color', '#ffffff');
+        root.style.setProperty('--speed-glow', 'rgba(255, 255, 255, 0.9)');
       }
     }
 
@@ -505,10 +510,10 @@
       const h = overlayCanvas.height;
       const accent = themes[currentMode].hex;
 
-      const dnaWidth = Math.min(220, w * 0.22);
-      const dnaHeight = 42;
-      const marginRight = Math.max(40, w * 0.05);
-      const marginTop = Math.max(35, h * 0.08);
+      const dnaWidth = Math.min(280, w * 0.28);
+      const dnaHeight = 60;
+      const marginRight = Math.max(35, w * 0.04);
+      const marginTop = Math.max(30, h * 0.07);
 
       const startX = w - dnaWidth - marginRight;
       const startY = marginTop;
@@ -520,32 +525,32 @@
       ctx.strokeStyle = accent;
       ctx.fillStyle = accent;
       ctx.shadowColor = accent;
-      ctx.shadowBlur = 12;
-      ctx.lineWidth = 2;
+      ctx.shadowBlur = 18;
+      ctx.lineWidth = 3;
 
-      const numPoints = 14;
+      const numPoints = 16;
       const spacing = dnaWidth / numPoints;
 
       for (let i = 0; i < numPoints; i++) {
         const x = startX + (i * spacing);
-        const angle = dnaTimer + (i * 0.45);
+        const angle = dnaTimer + (i * 0.4);
 
         const y1 = startY + Math.sin(angle) * (dnaHeight / 2);
         const y2 = startY - Math.sin(angle) * (dnaHeight / 2);
 
-        ctx.globalAlpha = 0.3;
+        ctx.globalAlpha = 0.4;
         ctx.beginPath();
         ctx.moveTo(x, y1);
         ctx.lineTo(x, y2);
         ctx.stroke();
 
-        ctx.globalAlpha = 0.9;
+        ctx.globalAlpha = 1.0;
         ctx.beginPath();
-        ctx.arc(x, y1, 3.5, 0, Math.PI * 2);
+        ctx.arc(x, y1, 4.5, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.beginPath();
-        ctx.arc(x, y2, 3.5, 0, Math.PI * 2);
+        ctx.arc(x, y2, 4.5, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.restore();
@@ -608,10 +613,6 @@
       const theme = themes[mode];
       document.documentElement.style.setProperty('--accent-color', theme.hex);
       document.documentElement.style.setProperty('--accent-glow', theme.glow);
-      if (!isSpeeding) {
-        document.documentElement.style.setProperty('--speed-speed-color', theme.hex);
-        document.documentElement.style.setProperty('--speed-glow', theme.glow);
-      }
       updateMapThemeColors();
     }
 
