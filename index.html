@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Minimal Vector HUD</title>
+
+  <!-- iOS Safari WebApp Integration -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="HUD">
+
+  <!-- MapLibre GL CSS -->
+  <link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet" />
+
+  <!-- Authentische 7-Segment Digitaluhren Schriftart -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.cdnfonts.com/css/ds-digital" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --accent-color: #ff0033;
+      --accent-glow: rgba(255, 0, 51, 0.7);
+      --bg-color: #000000;
+      --speed-color: #ff0033;
+      --speed-glow: rgba(255, 0, 51, 0.7);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+
+    body, html {
+      background-color: var(--bg-color);
+      color: var(--accent-color);
+      font-family: 'DS-Digital', 'Orbitron', monospace, sans-serif;
+      overflow: hidden;
+      height: 100%;
+      width: 100%;
+    }
+
+    /* Start Overlay für expliziten Nutzer-Klick */
+    #start-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: #000000;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .start-btn {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.2rem;
+      padding: 18px 36px;
+      border-radius: 16px;
+      background: transparent;
+      border: 2px solid var(--accent-color);
+      color: var(--accent-color);
+      font-weight: 900;
+      letter-spacing: 3px;
+      cursor: pointer;
+      box-shadow: 0 0 20px var(--accent-glow);
+    }
+
+    .start-btn:active {
+      background: var(--accent-color);
+      color: #000;
+    }
+
+    /* Haupt-Container für HUD-Spiegelung (Standardmäßig gespiegelt!) */
+    #app-container {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      transition: transform 0.3s ease-in-out;
+      transform: scaleY(-1);
+    }
+
+    .hud-mode-disabled {
+      transform: scaleY(1) !important;
+    }
+
+    /* Echte MapLibre Vektor-Karte */
+    #map {
+      width: 100%;
+      height: 100%;
+      background-color: #000000;
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+
+    /* Overlay Canvas für die Retro DNA-Spule */
+    #overlayCanvas {
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* Oben Links: Digitales Tempolimit */
+    #limit-display {
+      position: absolute;
+      top: max(20px, env(safe-area-inset-top));
+      left: max(25px, env(safe-area-inset-left));
+      z-index: 20;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .limit-value {
+      font-family: 'DS-Digital', sans-serif;
+      font-size: clamp(3rem, 6vw, 4.2rem);
+      font-weight: 900;
+      letter-spacing: 2px;
+      line-height: 1;
+      color: var(--accent-color);
+      text-shadow: 0 0 25px var(--accent-glow);
+    }
+
+    /* Unten Mitte: Digitale Geschwindigkeit */
+    #speed-display {
+      position: absolute;
+      bottom: max(12px, env(safe-area-inset-bottom));
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      pointer-events: none;
+    }
+
+    .speed-value {
+      font-family: 'DS-Digital', sans-serif;
+      font-size: clamp(6.5rem, 14vw, 9.5rem);
+      font-weight: 900;
+      line-height: 0.75;
+      letter-spacing: 2px;
+      font-variant-numeric: tabular-nums;
+      color: var(--speed-color);
+      text-shadow: 0 0 40px var(--speed-glow);
+      transition: color 0.75s ease-in-out, text-shadow 0.75s ease-in-out;
+    }
+
+    /* Unten Links: Aktuelle Adresse / GPS Status */
+    #address-display {
+      position: absolute;
+      bottom: max(15px, env(safe-area-inset-bottom));
+      left: max(25px, env(safe-area-inset-left));
+      z-index: 20;
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    #status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: #ffaa00;
+      box-shadow: 0 0 10px rgba(255, 170, 0, 0.8);
+      flex-shrink: 0;
+    }
+
+    .address-text {
+      font-family: 'Share Tech Mono', monospace;
+      font-size: 0.75rem;
+      letter-spacing: 1px;
+      color: var(--accent-color);
+      text-transform: uppercase;
+      opacity: 0.85;
+      text-shadow: 0 0 10px var(--accent-glow);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 280px;
+    }
+
+    /* Controls Unten Rechts ("Ghost"-Look) */
+    #controls {
+      position: absolute;
+      bottom: max(18px, env(safe-area-inset-bottom));
+      right: max(25px, env(safe-area-inset-right));
+      z-index: 30;
+      display: flex;
+      gap: 8px;
+      opacity: 0.35;
+      transition: opacity 0.3s ease;
+    }
+
+    #controls:hover, #controls:active {
+      opacity: 0.95;
+    }
+
+    button {
+      font-family: 'Orbitron', sans-serif;
+      background: rgba(0, 0, 0, 0.7);
+      border: 1px solid var(--accent-color);
+      color: var(--accent-color);
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+
+    button:active {
+      background: var(--accent-color);
+      color: #000;
+    }
+
+    .maplibregl-ctrl-attrib, .maplibregl-ctrl-logo {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Start Overlay -->
+  <div id="start-overlay">
+    <button class="start-btn" onclick="startHUDWithClick()">START HUD</button>
+  </div>
+
+  <div id="app-container">
+    <!-- Echte MapLibre Vektorkarte -->
+    <div id="map"></div>
+
+    <!-- Overlay Canvas für DNA-Helix -->
+    <canvas id="overlayCanvas"></canvas>
+
+    <!-- Oben Links: Reiner Tempolimit-Wert -->
+    <div id="limit-display">
+      <span id="speed-limit" class="limit-value">--</span>
+    </div>
+
+    <!-- Controls Unten Rechts -->
+    <div id="controls">
+      <button onclick="forceLocationReload()">GPS</button>
+      <button onclick="toggleDayNightManual()">MODE</button>
+      <button id="hud-btn" onclick="toggleHUD()">HUD</button>
+    </div>
+
+    <!-- Unten Links: Live-Adresse & GPS Status -->
+    <div id="address-display">
+      <div id="status-dot"></div>
+      <span id="address-label" class="address-text">SUCHE POSITION...</span>
+    </div>
+
+    <!-- Unten Mitte: Geschwindigkeits-Wert -->
+    <div id="speed-display">
+      <span id="speed" class="speed-value">0</span>
+    </div>
+  </div>
+
+  <!-- MapLibre GL JS -->
+  <script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+
+  <script>
+    let map;
+    let userMarker;
+    let markerElement;
+    
+    let currentSpeed = 0;
+    let speedLimit = null;
+    let isSpeeding = false;
+    let flashInterval = null;
+    let flashState = false;
+
+    let dnaTimer = 0;
+    let previousSpeedState = 'stationary';
+
+    let currentLat = 50.8163;
+    let currentLng = 7.1725;
+    let lastLimitFetchPos = null;
+
+    const overlayCanvas = document.getElementById('overlayCanvas');
+    const ctx = overlayCanvas.getContext('2d');
+
+    const themes = {
+      night: { 
+        hex: '#ff0033', 
+        glow: 'rgba(255, 0, 51, 0.7)', 
+        arrow: '#ffffff' 
+      },
+      day: { 
+        hex: '#ffffff', 
+        glow: 'rgba(255, 255, 255, 0.7)', 
+        arrow: '#ff0033' 
+      }
+    };
+    let currentMode = 'night';
+
+    function resizeOverlayCanvas() {
+      overlayCanvas.width = window.innerWidth * window.devicePixelRatio;
+      overlayCanvas.height = window.innerHeight * window.devicePixelRatio;
+    }
+    window.addEventListener('resize', resizeOverlayCanvas);
+    resizeOverlayCanvas();
+
+    // Astronomische Sunset-Berechnung
+    function calculateSunsetHour(lat, lng) {
+      const now = new Date();
+      const startOfYear = new Date(now.getFullYear(), 0, 0);
+      const dayOfYear = Math.floor((now - startOfYear) + ((startOfYear.getTimezoneOffset() - now.getTimezoneOffset()) * 60000)) / 86400000;
+      
+      const p = Math.asin(0.39795 * Math.sin((0.98565 * (dayOfYear - 173) + 3.1517) * Math.PI / 180));
+      const latRad = lat * Math.PI / 180;
+      const hourAngle = Math.acos(-Math.tan(latRad) * Math.tan(p));
+      
+      if (isNaN(hourAngle)) return 18;
+
+      const sunsetTimeUTC = 12 + (hourAngle * 180 / Math.PI) / 15 - (lng / 15);
+      return sunsetTimeUTC - (now.getTimezoneOffset() / 60);
+    }
+
+    function autoDetectNightMode(lat, lng) {
+      const now = new Date();
+      const currentDecimalHour = now.getHours() + (now.getMinutes() / 60);
+      
+      const sunsetHour = calculateSunsetHour(lat, lng);
+      const nightModeStartHour = sunsetHour - 1.0;
+      const sunriseHour = 24 - sunsetHour;
+
+      return (currentDecimalHour >= nightModeStartHour || currentDecimalHour < sunriseHour) ? 'night' : 'day';
+    }
+
+    // Initialisiert echte Vektor-Karte
+    function initMap() {
+      map = new maplibregl.Map({
+        container: 'map',
+        style: 'https://tiles.openfreemap.org/styles/dark',
+        center: [currentLng, currentLat],
+        zoom: 17.5,
+        pitch: 0,
+        bearing: 0
+      });
+
+      map.on('load', () => {
+        // Alle unnoetigen Karten-Layer wie Gebaeude, Pois, Wasser, Text-Labels ausblenden
+        const layersToHide = ['building', 'poi', 'water', 'landuse', 'place-label', 'road-label'];
+        layersToHide.forEach(layer => {
+          if (map.getLayer(layer)) map.setLayoutProperty(layer, 'visibility', 'none');
+        });
+
+        // Fahrzeug-Pfeil
+        markerElement = document.createElement('div');
+        markerElement.innerHTML = `
+          <svg width="36" height="36" viewBox="0 0 100 100" id="user-arrow" style="transition: transform 0.2s ease;">
+            <polygon points="50,5 90,90 50,70 10,90" fill="${themes[currentMode].arrow}" stroke="#000000" stroke-width="4"/>
+          </svg>
+        `;
+
+        userMarker = new maplibregl.Marker({ element: markerElement })
+          .setLngLat([currentLng, currentLat])
+          .addTo(map);
+
+        updateMapThemeColors();
+      });
+    }
+
+    // Färbt die echten Kartenstraßen dynamisch in Rot / Weiß um
+    function updateMapThemeColors() {
+      if (!map) return;
+      const themeColor = themes[currentMode].hex;
+
+      const roadLayers = ['road_primary', 'road_secondary', 'road_tertiary', 'road_trunk', 'road_motorway', 'road_minor', 'road_service'];
+      roadLayers.forEach(layer => {
+        if (map.getLayer(layer)) {
+          map.setPaintProperty(layer, 'line-color', themeColor);
+        }
+      });
+
+      const arrowPoly = document.querySelector('#user-arrow polygon');
+      if (arrowPoly) {
+        arrowPoly.setAttribute('fill', themes[currentMode].arrow);
+      }
+    }
+
+    // Echte Adresse laden
+    async function fetchAddressLabel(lat, lng) {
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`);
+        const data = await res.json();
+        if (data && data.address) {
+          const road = data.address.road || data.address.pedestrian || data.address.suburb || "UNBEKANNTE STRASSE";
+          const city = data.address.city || data.address.town || data.address.village || "";
+          document.getElementById('address-label').innerText = city ? `${road}, ${city}` : road;
+        }
+      } catch (e) {
+        document.getElementById('address-label').innerText = `${lat.toFixed(4)}°, ${lng.toFixed(4)}°`;
+      }
+    }
+
+    // Tempolimit aus Overpass auslesen
+    async function fetchSpeedLimit(lat, lng) {
+      if (lastLimitFetchPos) {
+        const dLat = Math.abs(lat - lastLimitFetchPos.lat);
+        const dLng = Math.abs(lng - lastLimitFetchPos.lng);
+        if (dLat < 0.001 && dLng < 0.001) return;
+      }
+      lastLimitFetchPos = { lat, lng };
+
+      fetchAddressLabel(lat, lng);
+
+      try {
+        const query = `[out:json][timeout:5];way(around:25,${lat},${lng})["maxspeed"];out tags;`;
+        const res = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
+        const data = await res.json();
+
+        if (data.elements && data.elements.length > 0 && data.elements[0].tags.maxspeed) {
+          const limit = parseInt(data.elements[0].tags.maxspeed);
+          if (!isNaN(limit)) {
+            speedLimit = limit;
+            document.getElementById('speed-limit').innerText = limit;
+            return;
+          }
+        }
+        speedLimit = null;
+        document.getElementById('speed-limit').innerText = "--";
+      } catch (e) {}
+    }
+
+    // Kamera-Anpassung: Top-Down im Stand (0-5 km/h) & 3D-Kamerafahrt bei Fahrt (> 5 km/h)
+    function updateCameraPerspective(kmh, newPos, heading) {
+      if (!map) return;
+      currentSpeed = kmh;
+
+      const currentSpeedState = kmh > 5 ? 'moving' : 'stationary';
+      let targetPitch = 0;
+      let targetZoom = 17.5;
+      let animationDuration = 1000;
+
+      if (currentSpeedState === 'moving') {
+        targetPitch = 68; // Echte 3D Neigung in Fahrtrichtung
+        targetZoom = kmh > 80 ? 15.8 : (kmh > 40 ? 16.8 : 17.8);
+        if (previousSpeedState === 'stationary') animationDuration = 2200;
+      } else {
+        targetPitch = 0; // Flache Draufsicht im Stand
+        targetZoom = 17.2;
+        if (previousSpeedState === 'moving') animationDuration = 1800;
+      }
+
+      previousSpeedState = currentSpeedState;
+
+      map.flyTo({
+        center: newPos,
+        pitch: targetPitch,
+        zoom: targetZoom,
+        bearing: heading !== null && !isNaN(heading) ? heading : map.getBearing(),
+        duration: animationDuration,
+        essential: true,
+        easing: (t) => t * (2 - t)
+      });
+
+      if (userMarker) userMarker.setLngLat(newPos);
+
+      if (heading !== null && !isNaN(heading)) {
+        const arrow = document.getElementById('user-arrow');
+        if (arrow) arrow.style.transform = `rotate(${heading}deg)`;
+      }
+    }
+
+    function handleSpeedingFlashing(speeding) {
+      if (speeding && !isSpeeding) {
+        isSpeeding = true;
+        flashState = false;
+        if (flashInterval) clearInterval(flashInterval);
+        
+        flashInterval = setInterval(() => {
+          flashState = !flashState;
+          const root = document.documentElement;
+          if (flashState) {
+            root.style.setProperty('--speed-color', '#ffffff');
+            root.style.setProperty('--speed-glow', 'rgba(255, 255, 255, 0.9)');
+          } else {
+            root.style.setProperty('--speed-color', '#ff0033');
+            root.style.setProperty('--speed-glow', 'rgba(255, 0, 51, 0.9)');
+          }
+        }, 750);
+      } else if (!speeding && isSpeeding) {
+        isSpeeding = false;
+        if (flashInterval) clearInterval(flashInterval);
+        flashInterval = null;
+        applyTheme(currentMode);
+      }
+    }
+
+    // Zeichnet DNA Visualizer oben rechts
+    function drawRetroDNAVisualizer() {
+      ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+      const w = overlayCanvas.width;
+      const h = overlayCanvas.height;
+      const accent = themes[currentMode].hex;
+
+      const dnaWidth = Math.min(220, w * 0.22);
+      const dnaHeight = 42;
+      const marginRight = Math.max(40, w * 0.05);
+      const marginTop = Math.max(35, h * 0.08);
+
+      const startX = w - dnaWidth - marginRight;
+      const startY = marginTop;
+
+      const speedRotation = 0.008 + (currentSpeed * 0.0008);
+      dnaTimer += speedRotation;
+
+      ctx.save();
+      ctx.strokeStyle = accent;
+      ctx.fillStyle = accent;
+      ctx.shadowColor = accent;
+      ctx.shadowBlur = 12;
+      ctx.lineWidth = 2;
+
+      const numPoints = 14;
+      const spacing = dnaWidth / numPoints;
+
+      for (let i = 0; i < numPoints; i++) {
+        const x = startX + (i * spacing);
+        const angle = dnaTimer + (i * 0.45);
+
+        const y1 = startY + Math.sin(angle) * (dnaHeight / 2);
+        const y2 = startY - Math.sin(angle) * (dnaHeight / 2);
+
+        ctx.globalAlpha = 0.3;
+        ctx.beginPath();
+        ctx.moveTo(x, y1);
+        ctx.lineTo(x, y2);
+        ctx.stroke();
+
+        ctx.globalAlpha = 0.9;
+        ctx.beginPath();
+        ctx.arc(x, y1, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(x, y2, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.restore();
+
+      requestAnimationFrame(drawRetroDNAVisualizer);
+    }
+
+    function startHUDWithClick() {
+      document.getElementById('start-overlay').style.display = 'none';
+      forceLocationReload();
+    }
+
+    function forceLocationReload() {
+      document.getElementById('status-dot').style.backgroundColor = '#ffaa00';
+      document.getElementById('status-dot').style.boxShadow = '0 0 10px rgba(255, 170, 0, 0.8)';
+      document.getElementById('address-label').innerText = "SUCHE GPS...";
+
+      if ("geolocation" in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            currentLat = pos.coords.latitude;
+            currentLng = pos.coords.longitude;
+            map.jumpTo({ center: [currentLng, currentLat], zoom: 17.5 });
+            fetchSpeedLimit(currentLat, currentLng);
+
+            document.getElementById('status-dot').style.backgroundColor = '#00ffcc';
+            document.getElementById('status-dot').style.boxShadow = '0 0 10px rgba(0, 255, 204, 0.8)';
+          },
+          (err) => {
+            document.getElementById('address-label').innerText = "GPS ERFORDERLICH";
+          },
+          { enableHighAccuracy: true, timeout: 8000 }
+        );
+
+        navigator.geolocation.watchPosition(
+          (pos) => {
+            currentLat = pos.coords.latitude;
+            currentLng = pos.coords.longitude;
+            const heading = pos.coords.heading;
+            const speedMS = pos.coords.speed || 0;
+            const kmh = Math.round(speedMS * 3.6);
+
+            document.getElementById('speed').innerText = kmh;
+            handleSpeedingFlashing(speedLimit && kmh > speedLimit);
+
+            currentMode = autoDetectNightMode(currentLat, currentLng);
+            applyTheme(currentMode);
+
+            updateCameraPerspective(kmh, [currentLng, currentLat], heading);
+            fetchSpeedLimit(currentLat, currentLng);
+          },
+          (err) => {},
+          { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
+        );
+      }
+    }
+
+    function applyTheme(mode) {
+      const theme = themes[mode];
+      document.documentElement.style.setProperty('--accent-color', theme.hex);
+      document.documentElement.style.setProperty('--accent-glow', theme.glow);
+      if (!isSpeeding) {
+        document.documentElement.style.setProperty('--speed-color', theme.hex);
+        document.documentElement.style.setProperty('--speed-glow', theme.glow);
+      }
+      updateMapThemeColors();
+    }
+
+    function toggleDayNightManual() {
+      currentMode = (currentMode === 'night') ? 'day' : 'night';
+      applyTheme(currentMode);
+    }
+
+    function toggleHUD() {
+      const container = document.getElementById("app-container");
+      container.classList.toggle("hud-mode-disabled");
+    }
+
+    window.onload = () => {
+      initMap();
+      currentMode = autoDetectNightMode(currentLat, currentLng);
+      applyTheme(currentMode);
+
+      drawRetroDNAVisualizer();
+    };
+  </script>
+</body>
+</html>
+
